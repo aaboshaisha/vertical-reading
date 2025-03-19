@@ -22,11 +22,12 @@ var/
 
 # Virtual Environment
 venv/
+myenv/
 ENV/
 .env
 
 # FastHTML specific
-sesskey
+.sesskey
 .fasthtml/
 
 # IDE files
