@@ -45,7 +45,7 @@ def create_table(table_header, ncols=3, syndrome='', conditions=None):
         aspect_cell = Div(rowname,
                           Button("Research", cls=ButtonT.secondary + " text-xs mt-2",
                                  hx_get=f"/research?aspect={urllib.parse.quote(rowname)}&syndrome={urllib.parse.quote(syndrome)}" + "".join([f"&condition{j+1}={urllib.parse.quote(c)}" for j, c in enumerate(conditions or [])]),
-                                 hx_target='#ai-feed-area', hx_swap='innerHTML'),
+                                 hx_target='#ai-feed-area', hx_swap='innerHTML', hx_indicator='#research-loading'),
                           cls="flex flex-col items-start")
         
         row = Tr(
@@ -142,6 +142,9 @@ async def post(request):
     return Div(
         H2(f"Studying: {syndrome}", cls="text-xl mb-4"),
         table,
+        Div(Loading(cls=LoadingT.spinner + " h-8 w-8"),
+            cls="htmx-indicator flex justify-center my-4",
+            id="research-loading"),
         buttons,
         Div(id="ai-feed-area", cls="mt-6 p-4 border rounded-md min-h-[200px]"),
         cls="py-4"
