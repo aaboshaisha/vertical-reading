@@ -13,7 +13,7 @@ from google import genai
 
 hdrs = (Theme.violet.headers(), MarkdownJS())
 
-app, rt = fast_app(live=True, hdrs=hdrs)
+app, rt = fast_app(live=True, debug=True, hdrs=hdrs)
 
 input_form = Card(
     CardHeader(H2("Vertical Reading Tool", cls='text-center')),
@@ -39,6 +39,47 @@ rownames = ["Epidemiology", "Time Course", "Symptoms and Signs", "Mechanisms of 
 def create_header(colnames):
     return Thead(Tr(Th('Aspect'), *[Th(colname) for colname in colnames]))
 
+save_script = Script("""
+function saveTableToLocalStorage() {
+    // Get syndrome from the page title instead of the input field
+    let titleElement = document.querySelector("h2");
+    let titleText = titleElement ? titleElement.textContent : "";
+    let syndrome = titleText.replace("Studying: ", "").trim();
+    
+    let tableData = {
+        syndrome: syndrome,
+        conditions: [],
+        cells: {}
+    };
+    
+    const headerCells = document.querySelectorAll('thead th');
+    for (let i = 1; i < headerCells.length; i++) {
+        tableData.conditions.push(headerCells[i].textContent.trim());
+    }
+    
+    const textareas = document.querySelectorAll('textarea[id^="cond"]');
+    textareas.forEach(textarea => {
+        tableData.cells[textarea.id] = textarea.value;
+    });
+    
+    localStorage.setItem("verticalReadingData", JSON.stringify(tableData));
+    console.log("Table data saved to localStorage");
+    return true;
+}
+
+// Use HTMX's event system instead of DOMContentLoaded
+document.body.addEventListener('htmx:afterSwap', function() {
+    document.querySelectorAll('textarea[id^="cond"]').forEach(textarea => {
+        textarea.addEventListener('input', saveTableToLocalStorage);
+    });
+});
+
+// Also add the function to the global scope to make it available for onclick
+window.saveTableToLocalStorage = saveTableToLocalStorage;
+""")
+
+
+
 def create_table(table_header, ncols=3, syndrome='', conditions=None):
     rows = []
     for i, rowname in enumerate(rownames):
@@ -58,7 +99,7 @@ def create_table(table_header, ncols=3, syndrome='', conditions=None):
     return Table(table_header, Tbody(*rows), cls="w-full border-collapse border border-slate-300")
 
 buttons = Div(
-    Button('AI Complete Table', cls=ButtonT.primary),
+    Button("Save", cls=ButtonT.secondary, onclick="saveTableToLocalStorage();alert('Table saved successfully!');"),
     Button('Compare with AI', cls=ButtonT.secondary),
     cls="flex space-x-4 justify-center mt-4"
 )
@@ -146,6 +187,7 @@ async def post(request):
             cls="htmx-indicator flex justify-center my-4",
             id="research-loading"),
         buttons,
+        save_script,
         Div(id="ai-feed-area", cls="mt-6 p-4 border rounded-md min-h-[200px]"),
         cls="py-4"
     )
