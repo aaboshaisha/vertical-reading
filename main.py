@@ -46,11 +46,7 @@ function saveTableToLocalStorage() {
     let titleText = titleElement ? titleElement.textContent : "";
     let syndrome = titleText.replace("Studying: ", "").trim();
     
-    let tableData = {
-        syndrome: syndrome,
-        conditions: [],
-        cells: {}
-    };
+    let tableData = {syndrome: syndrome, conditions: [], cells: {} };
     
     const headerCells = document.querySelectorAll('thead th');
     for (let i = 1; i < headerCells.length; i++) {
@@ -67,6 +63,57 @@ function saveTableToLocalStorage() {
     return true;
 }
 
+function tableToCSV(data) {
+    const aspects = ["Epidemiology", "Time Course", "Symptoms and Signs", "Mechanisms of Disease"];
+    const {syndrome, conditions, cells} = data;
+
+    const header = ["Aspect", ...conditions].join(',');
+
+    function makeRow(aspect) {
+        const values = conditions.map((_, i) => {
+            const value = cells[`cond${i}_${aspect}`] || "";
+            return `"${value.replace(/"/g, '""')}"`;
+        });
+        return [aspect, ...values].join(',');
+    }
+    
+    const rows = aspects.map(makeRow);
+    return [header, ...rows].join('\\n');
+}
+
+function downloadCSV(csvData, filename) {
+    // Create a blob with the CSV data
+    const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
+    
+    // Create a URL for the blob
+    const url = URL.createObjectURL(blob);
+    
+    // Create a link element to trigger the download
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    
+    // Append to document, click, and clean up
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function downloadTableAsCSV() {
+    // First make sure data is saved
+    saveTableToLocalStorage();
+
+    const savedData = JSON.parse(localStorage.getItem("verticalReadingData"));
+    if (!savedData) {
+        alert("No data found to download");
+        return;
+    }
+    
+    const csvData = tableToCSV(savedData);
+    const filename = `${savedData.syndrome}_table.csv`;
+    downloadCSV(csvData, filename);
+}
+
 // Use HTMX's event system instead of DOMContentLoaded
 document.body.addEventListener('htmx:afterSwap', function() {
     document.querySelectorAll('textarea[id^="cond"]').forEach(textarea => {
@@ -76,7 +123,9 @@ document.body.addEventListener('htmx:afterSwap', function() {
 
 // Also add the function to the global scope to make it available for onclick
 window.saveTableToLocalStorage = saveTableToLocalStorage;
+window.downloadTableAsCSV = downloadTableAsCSV;
 """)
+
 
 
 
@@ -98,11 +147,14 @@ def create_table(table_header, ncols=3, syndrome='', conditions=None):
         rows.append(row)
     return Table(table_header, Tbody(*rows), cls="w-full border-collapse border border-slate-300")
 
+
 buttons = Div(
     Button("Save", cls=ButtonT.secondary, onclick="saveTableToLocalStorage();alert('Table saved successfully!');"),
+    Button("Download CSV", cls=ButtonT.primary, onclick="downloadTableAsCSV()"),
     Button('Compare with AI', cls=ButtonT.secondary),
     cls="flex space-x-4 justify-center mt-4"
 )
+
 
 MODEL = 'gemini-2.0-flash-exp'
 client = genai.Client(api_key=api_key)
@@ -136,16 +188,8 @@ def create_prompts(syndrome, conditions):
 def research_conditions(syndrome, conditions, aspect):
     prompts = create_prompts(syndrome, conditions)
     prompt = prompts.get(aspect)
-    if not prompt:
-        return Div(P(f"Unknown research aspect: {aspect}"), cls="p-4 bg-red-100")
-    results = query_google_ai(prompt)
-    
-    return Div(
-        H3(f"{aspect} Research", cls="text-lg font-bold mb-2"),
-        P(f"Research results for {', '.join(conditions)}", cls="italic mb-4"),
-        Div(results, cls="p-4 bg-slate-50 rounded"),
-        cls="p-4 border rounded-md"
-    )
+    if not prompt: return Div(P(f"Unknown research aspect: {aspect}"), cls="p-4 bg-red-100")
+    return query_google_ai(prompt)
 
 
 @rt('/research')
@@ -156,17 +200,16 @@ def research(request):
     i, conditions = 1, []
     while f'condition{i}' in request.query_params:
         condition = request.query_params.get(f'condition{i}')
-        if condition:
-            conditions.append(condition)
+        if condition: conditions.append(condition)
         i += 1    
     
     if not aspect or not syndrome or not conditions:
         return Div(P("Missing required parameters"), cls="p-4 bg-red-100")
     results = research_conditions(syndrome, conditions, aspect)
     return Div(
-        H3(f"Research: {aspect} for {syndrome}", cls="text-xl font-bold mb-4"),
+        H3(f"Research: {aspect} for {syndrome}\n\n", cls="text-xl font-bold mb-4"),
         results,
-        cls="p-4 border rounded-md marked"
+        cls="p-4 marked"
     )
 
 @rt('/create-study')
@@ -184,8 +227,7 @@ async def post(request):
         H2(f"Studying: {syndrome}", cls="text-xl mb-4"),
         table,
         Div(Loading(cls=LoadingT.spinner + " h-8 w-8"),
-            cls="htmx-indicator flex justify-center my-4",
-            id="research-loading"),
+            cls="htmx-indicator flex justify-center my-4", id="research-loading"),
         buttons,
         save_script,
         Div(id="ai-feed-area", cls="mt-6 p-4 border rounded-md min-h-[200px]"),
