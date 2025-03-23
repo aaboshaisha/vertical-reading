@@ -1,44 +1,6 @@
 from monsterui.all import *
 from fasthtml.common import *
 
-import urllib.parse
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-api_key = os.getenv('GEMINI_API_KEY')
-
-from google import genai
-
-
-hdrs = (Theme.violet.headers(), MarkdownJS())
-
-app, rt = fast_app(live=True, debug=True, hdrs=hdrs)
-
-input_form = Card(
-    CardHeader(H2("Vertical Reading Tool", cls='text-center')),
-    CardBody(
-        Form(
-            LabelInput("Syndrome", id="syndrome", placeholder="e.g., Pharyngitis"),
-            Div(H4("Conditions that cause this syndrome:"), cls="mt-4 mb-2"),
-            LabelInput("Condition 1", id="condition1", placeholder="e.g., Group A beta hemolytic strep"),
-            LabelInput("Condition 2", id="condition2", placeholder="e.g., Infectious mononucleosis"),
-            LabelInput("Condition 3", id="condition3", placeholder="e.g., Acute retroviral syndrome"),
-            Div(Button("Start Study", cls=ButtonT.primary), cls='flex justify-center mt-4'),
-            cls='space-y-4',
-            hx_post='/create-study',
-            hx_target='#main-content',
-            hx_swap='innerHTML'
-        )
-    ),
-    cls="max-w-2xl mx-auto"
-)
-
-rownames = ["Epidemiology", "Time Course", "Symptoms and Signs", "Mechanisms of Disease"]
-
-def create_header(colnames):
-    return Thead(Tr(Th('Aspect'), *[Th(colname) for colname in colnames]))
-
 save_script = Script("""
 function saveTableToLocalStorage() {
     // Get syndrome from the page title instead of the input field
@@ -46,7 +8,7 @@ function saveTableToLocalStorage() {
     let titleText = titleElement ? titleElement.textContent : "";
     let syndrome = titleText.replace("Studying: ", "").trim();
     
-    let tableData = {syndrome: syndrome, conditions: [], cells: {} };
+    let tableData = {syndrome: syndrome, conditions: [], cells: {}};
     
     const headerCells = document.querySelectorAll('thead th');
     for (let i = 1; i < headerCells.length; i++) {
@@ -114,6 +76,26 @@ function downloadTableAsCSV() {
     downloadCSV(csvData, filename);
 }
 
+function compareWithAI() {
+    const savedData = JSON.parse(localStorage.getItem("verticalReadingData"));
+    if (!savedData) {
+        alert("Please save your table first before comparing with AI");
+        return;
+    }
+    
+    const syndrome = savedData.syndrome;
+    const conditions = savedData.conditions;
+    
+    let url = `/research?aspect=full_comparison&syndrome=${encodeURIComponent(syndrome)}`;
+    conditions.forEach((condition, i) => {
+        url += `&condition${i+1}=${encodeURIComponent(condition)}`;
+    });
+    
+    // Trigger HTMX request manually
+    htmx.ajax('GET', url, {target: '#ai-feed-area', swap: 'innerHTML'});
+}
+
+                                          
 // Use HTMX's event system instead of DOMContentLoaded
 document.body.addEventListener('htmx:afterSwap', function() {
     document.querySelectorAll('textarea[id^="cond"]').forEach(textarea => {
@@ -121,12 +103,54 @@ document.body.addEventListener('htmx:afterSwap', function() {
     });
 });
 
-// Also add the function to the global scope to make it available for onclick
+// Add functions to the global scope to make them available for onclick
 window.saveTableToLocalStorage = saveTableToLocalStorage;
 window.downloadTableAsCSV = downloadTableAsCSV;
+window.compareWithAI = compareWithAI;
 """)
 
 
+
+
+
+import urllib.parse
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+api_key = os.getenv('GEMINI_API_KEY')
+
+from google import genai
+MODEL = 'gemini-2.0-flash-exp'
+client = genai.Client(api_key=api_key)
+
+hdrs = (Theme.violet.headers(), MarkdownJS())
+
+app, rt = fast_app(live=True, debug=True, hdrs=hdrs)
+
+input_form = Card(
+    CardHeader(H2("Vertical Reading Tool", cls='text-center')),
+    CardBody(
+        Form(
+            LabelInput("Syndrome", id="syndrome", placeholder="e.g., Pharyngitis"),
+            Div(H4("Conditions that cause this syndrome:"), cls="mt-4 mb-2"),
+            LabelInput("Condition 1", id="condition1", placeholder="e.g., Group A beta hemolytic strep"),
+            LabelInput("Condition 2", id="condition2", placeholder="e.g., Infectious mononucleosis"),
+            LabelInput("Condition 3", id="condition3", placeholder="e.g., Acute retroviral syndrome"),
+            Div(Button("Start Study", cls=ButtonT.primary), cls='flex justify-center mt-4'),
+            cls='space-y-4',
+            hx_post='/create-study',
+            hx_target='#main-content',
+            hx_swap='innerHTML'
+        )
+    ),
+    cls="max-w-2xl mx-auto"
+)
+
+rownames = ["Epidemiology", "Time Course", "Symptoms and Signs", "Mechanisms of Disease"]
+
+def create_header(colnames):
+    return Thead(Tr(Th('Aspect'), *[Th(colname) for colname in colnames]))
 
 
 def create_table(table_header, ncols=3, syndrome='', conditions=None):
@@ -151,26 +175,23 @@ def create_table(table_header, ncols=3, syndrome='', conditions=None):
 buttons = Div(
     Button("Save", cls=ButtonT.secondary, onclick="saveTableToLocalStorage();alert('Table saved successfully!');"),
     Button("Download CSV", cls=ButtonT.primary, onclick="downloadTableAsCSV()"),
-    Button('Compare with AI', cls=ButtonT.secondary),
+    Button('Compare with AI', cls=ButtonT.secondary, onclick="compareWithAI()"),
     cls="flex space-x-4 justify-center mt-4"
 )
 
-
-MODEL = 'gemini-2.0-flash-exp'
-client = genai.Client(api_key=api_key)
 
 def query_google_ai(prompt):
     try:
         search_tool = {'google_search':{}}
         chat = client.chats.create(model=MODEL, config={'tools':[search_tool]})
         response = chat.send_message(prompt)
-        result = response.candidates[0].content.parts[0].text
-        return Div(Safe(result), cls='markdown')
+        result = ''.join([part.text for part in response.candidates[0].content.parts if hasattr(part, 'text')]) # Combine all text parts from the response
+        return Div(Safe(result))
     except Exception as e:
         return P(f"Error querying AI: {str(e)}", cls="text-red-500")
 
+
 def create_prompts(syndrome, conditions):
-    """Create prompts dictionary based on syndrome and conditions."""
     return {
         "Epidemiology": f"What is the epidemiology (who gets it, risk factors, prevalence, age groups) of each of these conditions that cause {syndrome}: {', '.join(conditions)}? For each condition, provide a concise, factual summary.",
         
@@ -185,12 +206,31 @@ def create_prompts(syndrome, conditions):
         "Mechanisms of Disease": f"What are the mechanisms by which each of these conditions causes {syndrome}: {', '.join(conditions)}? Explain the pathophysiology in clear, concise terms for each condition."
     }
 
+
+def create_comparison_prompt(syndrome, conditions):    
+    return f"""Create a comprehensive comparison table for {syndrome} caused by these conditions: {", ".join(conditions)}.
+
+For each condition, analyze and compare these aspects:
+1. Epidemiology: Who gets it? Include demographics, risk factors, prevalence, and incidence.
+2. Time Course: How does it present and evolve? Include onset characteristics, progression pattern, duration, and resolution.
+3. Symptoms and Signs: What are the clinical manifestations? 
+4. Mechanisms of Disease: What is the pathophysiology? Include causal mechanisms.
+
+After describing each aspect for all conditions, identify:
+- COMMON features present in all conditions
+- DIFFERENTIATING features present in only two conditions (specify which two)
+- KEY features unique to only one condition (specify which one)
+
+Format your response as a clear, well-structured markdown table that medical students can easily study from."""
+
+
 def research_conditions(syndrome, conditions, aspect):
+    if aspect == "full_comparison": return query_google_ai(create_comparison_prompt(syndrome, conditions))
+    
     prompts = create_prompts(syndrome, conditions)
     prompt = prompts.get(aspect)
     if not prompt: return Div(P(f"Unknown research aspect: {aspect}"), cls="p-4 bg-red-100")
     return query_google_ai(prompt)
-
 
 @rt('/research')
 def research(request):
@@ -224,6 +264,12 @@ async def post(request):
     table = create_table(table_header=create_header(conditions), ncols=len(conditions), syndrome=syndrome, conditions=conditions)
 
     return Div(
+        Div(
+            A(DivLAligned(UkIcon('home', cls='mr-2'), "Home"), 
+              href='/', 
+              cls='text-primary hover:underline mb-4'),
+            cls='flex flex-col'
+        ),
         H2(f"Studying: {syndrome}", cls="text-xl mb-4"),
         table,
         Div(Loading(cls=LoadingT.spinner + " h-8 w-8"),
