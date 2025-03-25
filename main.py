@@ -77,6 +77,8 @@ function downloadTableAsCSV() {
 }
 
 function compareWithAI() {
+    saveTableToLocalStorage();
+                     
     const savedData = JSON.parse(localStorage.getItem("verticalReadingData"));
     if (!savedData) {
         alert("Please save your table first before comparing with AI");
